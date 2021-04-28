@@ -1,0 +1,171 @@
+apiVersion: audit.k8s.io/v1
+kind: Policy
+metadata:
+  name: SplunkForwarder
+rules:
+
+# exclude common non-resource requests
+- level: None
+  nonResourceURLs:
+  - /
+  - /version
+  - '/api*'
+  - '/openapi/v2*'
+  - '/readyz*'
+  - '/livez*'
+  - '/healthz*'
+  - '/.well-known*'
+  verbs:
+  - get
+  - head
+  - options
+
+# exclude leases, token+access reviews 
+- level: None
+  resources:
+  - group: coordination.k8s.io
+    resources: ['leases']
+  - group: authentication.k8s.io
+    resources: ['tokenreviews']
+  - group: authorization.k8s.io
+    resources:
+    - subjectaccessreviews
+    - selfsubjectaccessreviews
+
+# don't log tokenrequests responses
+- level: Metadata
+  resources:
+  - resources:
+    - serviceaccounts/token
+
+# always log system:admin events
+- level: RequestResponse
+  users: ['system:admin']
+
+# always log backplane activity
+- level: RequestResponse
+  userGroups:
+  - system:serviceaccounts:backplane-srep
+  - system:serviceaccounts:backplane-cssre
+  - system:serviceaccounts:backplane-cee
+
+# drop noisy system reads
+- level: None
+  users:
+  - system:apiserver
+  - system:kube-apiserver
+  - system:kube-scheduler
+  - system:kube-controller-manager
+  - system:serviceaccount:openshift-kube-apiserver:check-endpoints
+  verbs:
+  - get
+  - head
+  - list
+  - watch
+- level: None
+  userGroups:
+  - system:nodes
+  - system:serviceaccounts
+  verbs:
+  - get
+  - list
+  - watch
+
+# always forward pod activity & other resources we're interested in
+- level: RequestResponse
+  resources:
+  - group: ""
+    resources:
+    - pods
+  - group: compliance.openshift.io
+    resources:
+    - compliancecheckresults
+  - group: secscan.quay.redhat.com
+    resources:
+    - imagemanifestvulns
+
+# drop noisy system status updates
+- level: None
+  userGroups:
+  - system:nodes
+  - system:serviceaccounts
+  resources:
+  - resources: ['*/status']
+  - group: apps
+    resources: ['*/status']
+  - group: batch
+    resources: ['*/status']
+  - group: managed.openshift.io
+    resources: ['subjectpermissions/status']
+  - group: operators.coreos.com
+    resources: ['catalogsources/status']
+  - group: velero.io
+    resources:
+    - backups
+    - backupstoragelocations/status
+  verbs:
+  - patch
+  - update
+
+# drop console session tracking 
+- level: None
+  resources:
+  - resources: ['configmaps']
+    namespaces: ['openshift-console-user-settings']
+
+# some other especially noisy edge cases:
+- level: None
+  users:
+  - system:serviceaccount:openshift-operator-lifecycle-manager:olm-operator-serviceaccount
+  - system:serviceaccount:kube-system:clusterrole-aggregation-controller
+  resources:
+  - resources:
+    - roles
+    - namespaces
+    - clusterroles
+  verbs:
+  - update
+  - patch
+
+# cvo likes to update imagestream timestamps constantly
+- level: None
+  users:
+  - system:serviceaccount:openshift-cluster-version:default
+  resources:
+  - group: image.openshift.io
+    resources:
+    - imagestreams
+  verbs:
+  - update
+
+# cmo and prom do a lot of no-op applies to their secrets
+- level: None
+  users:
+  - system:serviceaccount:openshift-monitoring:cluster-monitoring-operator
+  - system:serviceaccount:openshift-monitoring:prometheus-operator
+  resources:
+  - group: ""
+    namespaces:
+    - openshift-monitoring
+    resources:
+    - secrets
+  verbs:
+  - update
+
+# cvo and console-operator fight over these routes a lot
+- level: None
+  users:
+  - system:serviceaccount:openshift-console-operator:console-operator
+  - system:serviceaccount:openshift-cluster-version:default
+  resources:
+  - group: route.openshift.io
+    namespaces:
+    - openshift-console
+    resources:
+    - routes
+    resourceNames:
+    - console
+    - downloads
+  verbs:
+  - update
+
